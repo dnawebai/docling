@@ -1,6 +1,8 @@
 import asyncio
 import json
 import os
+import hashlib
+import hmac
 import tempfile
 from pathlib import Path
 from threading import Lock
@@ -11,7 +13,7 @@ from pydantic import BaseModel
 from docling.document_converter import DocumentConverter
 
 MAX_UPLOAD_BYTES = int(os.getenv('IQUASH_DOCLING_MAX_UPLOAD_BYTES', str(30 * 1024 * 1024)))
-API_KEY = os.getenv('IQUASH_DOCLING_API_KEY', '').strip()
+API_KEY_SHA256 = os.getenv('IQUASH_DOCLING_API_KEY_SHA256', '').strip().lower()
 
 app = FastAPI(title='iQuash Docling Service', version='1.0.0', docs_url=None, redoc_url=None)
 
@@ -36,9 +38,12 @@ class ParseResponse(BaseModel):
 
 
 def require_api_key(authorization: str | None = Header(default=None)) -> None:
-    if not API_KEY:
-        raise HTTPException(status_code=503, detail='Docling service API key is not configured')
-    if authorization != f'Bearer {API_KEY}':
+    if not API_KEY_SHA256:
+        raise HTTPException(status_code=503, detail='Docling service API key hash is not configured')
+    if not authorization or not authorization.startswith('Bearer '):
+        raise HTTPException(status_code=401, detail='Unauthorized')
+    digest = hashlib.sha256(authorization[7:].encode()).hexdigest()
+    if not hmac.compare_digest(digest, API_KEY_SHA256):
         raise HTTPException(status_code=401, detail='Unauthorized')
 
 
@@ -147,7 +152,7 @@ def health() -> dict[str, Any]:
         'service': 'iquash-docling',
         'engine': 'Docling',
         'converter_loaded': _converter is not None,
-        'auth_configured': bool(API_KEY),
+        'auth_configured': bool(API_KEY_SHA256),
     }
 
 
